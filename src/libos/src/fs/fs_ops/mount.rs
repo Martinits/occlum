@@ -107,6 +107,23 @@ pub fn do_mount(
             };
             (vec![mc], unionfs_options.key)
         }
+        MountOptions::ECCFS(eccfs_options) => {
+            let mc = ConfigMount {
+                type_: ConfigMountFsType::TYPE_ECCFS,
+                target,
+                source: Some(eccfs_options.image.clone()),
+                options: ConfigMountOptions {
+                    ecc_mode: Some((
+                        eccfs_options.writable,
+                        eccfs_options.encrypted,
+                        eccfs_options.ke,
+                    )),
+                    cache_size: eccfs_options.cache_size,
+                    ..Default::default()
+                },
+            };
+            (vec![mc], None)
+        }
         MountOptions::SEFS(sefs_options) => {
             let mc = ConfigMount {
                 type_: ConfigMountFsType::TYPE_SEFS,
@@ -211,6 +228,7 @@ bitflags! {
 
 #[derive(Debug)]
 pub enum MountOptions {
+    ECCFS(ECCFSMountOptions),
     UnionFS(UnionFSMountOptions),
     SEFS(SEFSMountOptions),
     HostFS(PathBuf),
@@ -220,6 +238,15 @@ pub enum MountOptions {
 impl MountOptions {
     pub fn from_fs_type_and_options(type_: &ConfigMountFsType, options: *const i8) -> Result<Self> {
         Ok(match type_ {
+            ConfigMountFsType::TYPE_ECCFS => {
+                let eccfs_mount_options = {
+                    let options = from_user::clone_cstring_safely(options)?
+                        .to_string_lossy()
+                        .into_owned();
+                    ECCFSMountOptions::from_input(options.as_str())?
+                };
+                Self::ECCFS(eccfs_mount_options)
+            }
             ConfigMountFsType::TYPE_SEFS => {
                 let sefs_mount_options = {
                     let options = from_user::clone_cstring_safely(options)?
@@ -320,6 +347,54 @@ impl SEFSMountOptions {
             dir: PathBuf::from(dir),
             key,
             mac,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ECCFSMountOptions {
+    image: PathBuf,
+    writable: bool,
+    encrypted: bool,
+    ke: Option<ecc::KeyEntry>,
+    cache_size: Option<u64>,
+}
+
+impl ECCFSMountOptions {
+    pub fn from_input(input: &str) -> Result<Self> {
+        let options: Vec<&str> = input.split(",").collect();
+
+        let image = options
+            .iter()
+            .find_map(|s| s.strip_prefix("image="))
+            .ok_or_else(|| errno!(EINVAL, "no image options"))?;
+
+        let encrypted = options.iter().find(|s| *s == &"encrypted").is_some();
+
+        let writable = options.iter().find(|s| *s == &"rw").is_some();
+        if !writable && options.iter().find(|s| *s == &"ro").is_none() {
+            return_errno!(EINVAL, "eccfs: no ro or rw option");
+        }
+
+        let ke = match options.iter().find_map(|s| s.strip_prefix("ke=")) {
+            Some(ke_str) => Some(ecc::parse_ke(ke_str)?),
+            None => None,
+        };
+
+        let cache_size = match options.iter().find_map(|s| s.strip_prefix("cache=")) {
+            Some(sz_str) => Some(
+                u64::from_str_radix(sz_str, 10)
+                    .map_err(|_| errno!(EINVAL, "invalid cache size"))?,
+            ),
+            None => None,
+        };
+
+        Ok(Self {
+            image: PathBuf::from(image),
+            writable,
+            encrypted,
+            ke,
+            cache_size,
         })
     }
 }

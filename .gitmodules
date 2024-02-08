@@ -24,3 +24,6 @@
 [submodule "deps/resolv-conf"]
 	path = deps/resolv-conf
 	url = https://github.com/tailhook/resolv-conf.git
+[submodule "deps/eccfs"]
+	path = deps/eccfs
+	url = https://github.com/Martinits/eccfs

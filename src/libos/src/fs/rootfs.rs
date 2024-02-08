@@ -113,6 +113,10 @@ pub fn mount_nonroot_fs_according_to(
 
         use self::ConfigMountFsType::*;
         match mc.type_ {
+            TYPE_ECCFS => {
+                let eccfs = open_or_create_eccfs_according_to(&mc)?;
+                mount_fs_at(eccfs, root, &mc.target, follow_symlink)?;
+            }
             TYPE_SEFS => {
                 let sefs = open_or_create_sefs_according_to(&mc, user_key)?;
                 mount_fs_at(sefs, root, &mc.target, follow_symlink)?;
@@ -265,4 +269,35 @@ fn open_or_create_sefs_according_to(
         )?
     };
     Ok(sefs)
+}
+
+fn open_or_create_eccfs_according_to(mc: &ConfigMount) -> Result<Arc<ecc::EccFS>> {
+    assert!(mc.type_ == ConfigMountFsType::TYPE_ECCFS);
+
+    if mc.source.is_none() {
+        return_errno!(EINVAL, "Source is expected for ECCFS");
+    }
+    if mc.options.temporary {
+        return_errno!(EINVAL, "ECCFS cannot be temporary");
+    }
+    let source_path = mc.source.as_ref().unwrap();
+    let cache_size = mc.options.cache_size;
+    let (writable, encrypted, opt_ke) = mc
+        .options
+        .ecc_mode
+        .as_ref()
+        .ok_or(errno!(EINVAL, "eccfs requires ecc_mode in ConfigMount"))?
+        .clone();
+
+    let ke = opt_ke
+        .ok_or(errno!(EINVAL, "eccfs RO requires a full key entry"))?
+        .clone();
+    let eccro = ecc::EccFS::new(
+        source_path,
+        writable,
+        ecc::FSMode::from_key_entry(ke, encrypted),
+        cache_size,
+    )?;
+
+    Ok(eccro)
 }

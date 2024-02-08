@@ -149,6 +149,7 @@ pub enum ConfigMountFsType {
     TYPE_UNIONFS,
     TYPE_DEVFS,
     TYPE_PROCFS,
+    TYPE_ECCFS,
 }
 
 impl ConfigMountFsType {
@@ -162,6 +163,7 @@ impl ConfigMountFsType {
             "unionfs" => ConfigMountFsType::TYPE_UNIONFS,
             "devfs" => ConfigMountFsType::TYPE_DEVFS,
             "procfs" => ConfigMountFsType::TYPE_PROCFS,
+            "eccfs" => ConfigMountFsType::TYPE_ECCFS,
             _ => {
                 return_errno!(EINVAL, "Unsupported file system type");
             }
@@ -170,9 +172,12 @@ impl ConfigMountFsType {
     }
 }
 
+pub type KeyEntry = [u8; 32];
+
 #[derive(Clone, Default, Debug)]
 pub struct ConfigMountOptions {
     pub mac: Option<sgx_aes_gcm_128bit_tag_t>,
+    pub ecc_mode: Option<(bool, bool, Option<KeyEntry>)>, // writable, encrypted, ke
     pub layers: Option<Vec<ConfigMount>>,
     pub temporary: bool,
     pub cache_size: Option<u64>,
@@ -329,6 +334,7 @@ impl ConfigMountOptions {
             temporary: input.temporary,
             cache_size,
             index: input.index,
+            ecc_mode: None,
         })
     }
 }

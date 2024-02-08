@@ -34,6 +34,7 @@ goblin = { version = "0.5.4", default-features = false, features = ["elf64", "el
 intrusive-collections = "0.9"
 spin = "0.7"
 modular-bitfield = "0.11.2"
+eccfs = { path = "../../deps/eccfs/eccfs", features = ["nightly_build"] }
 
 [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 sgx_tstd = { path = "../../deps/rust-sgx-sdk/sgx_tstd" }
