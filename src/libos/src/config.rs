@@ -150,11 +150,21 @@ pub enum ConfigMountFsType {
     TYPE_DEVFS,
     TYPE_PROCFS,
     TYPE_ECCFS,
+    TYPE_ECCFS_OVL,
 }
 
 impl ConfigMountFsType {
     pub fn from_input(input: &str) -> Result<ConfigMountFsType> {
-        const ALL_FS_TYPES: [&str; 6] = ["sefs", "hostfs", "ramfs", "unionfs", "devfs", "procfs"];
+        const ALL_FS_TYPES: [&str; 8] = [
+            "sefs",
+            "hostfs",
+            "ramfs",
+            "unionfs",
+            "devfs",
+            "procfs",
+            "eccfs",
+            "eccfs_ovl",
+        ];
 
         let type_ = match input {
             "sefs" => ConfigMountFsType::TYPE_SEFS,
@@ -164,6 +174,7 @@ impl ConfigMountFsType {
             "devfs" => ConfigMountFsType::TYPE_DEVFS,
             "procfs" => ConfigMountFsType::TYPE_PROCFS,
             "eccfs" => ConfigMountFsType::TYPE_ECCFS,
+            "eccfs_ovl" => ConfigMountFsType::TYPE_ECCFS_OVL,
             _ => {
                 return_errno!(EINVAL, "Unsupported file system type");
             }
@@ -178,6 +189,7 @@ pub type KeyEntry = [u8; 32];
 pub struct ConfigMountOptions {
     pub mac: Option<sgx_aes_gcm_128bit_tag_t>,
     pub ecc_mode: Option<(bool, bool, Option<KeyEntry>)>, // writable, encrypted, ke
+    pub ecc_ovl_mode: Option<Vec<(PathBuf, bool, KeyEntry)>>, // path, encrypted, ke
     pub layers: Option<Vec<ConfigMount>>,
     pub temporary: bool,
     pub cache_size: Option<u64>,
@@ -334,7 +346,7 @@ impl ConfigMountOptions {
             temporary: input.temporary,
             cache_size,
             index: input.index,
-            ecc_mode: None,
+            ..Default::default()
         })
     }
 }

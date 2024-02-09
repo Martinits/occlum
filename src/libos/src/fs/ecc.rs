@@ -173,46 +173,80 @@ impl eccfs::RWStorage for EccFSStorage {
 
 pub struct EccFS {
     fs: Arc<dyn eccfs::FileSystem>,
-    writable: bool,
     self_ptr: Weak<EccFS>,
 }
 
 impl EccFS {
     pub fn new(
-        path: &PathBuf,
+        mut path: Vec<(PathBuf, FSMode)>,
         writable: bool,
-        mode: FSMode,
+        ovl: bool,
         cache_size: Option<u64>,
     ) -> Result<Arc<Self>> {
-        debug!("creating eccfs {}", path.display());
-        let fs = if writable {
-            let device = EccFSDevice { dir: path.clone() };
-            let fs = eccfs_err_to_occlum!(eccfs::rw::RWFS::new(
-                false,
-                mode,
-                None,
-                0,
-                Arc::new(device),
-                &EccFSTimeProvider,
-            ));
+        debug!("creating eccfs");
+        let fs = if ovl {
+            let upper = {
+                let device = EccFSDevice {
+                    dir: path[0].0.clone(),
+                };
+                let fs = eccfs_err_to_occlum!(eccfs::rw::RWFS::new(
+                    false,
+                    path[0].1.clone(),
+                    None,
+                    0,
+                    Arc::new(device),
+                    &EccFSTimeProvider,
+                ));
+                Arc::new(fs) as Arc<dyn eccfs::FileSystem>
+            };
+            let mut lower = Vec::new();
+            for (pb, mode) in path.into_iter().skip(1) {
+                let store = EccFSStorage {
+                    f: Mutex::new(fs::File::open(pb).map_err(|_| errno!(EIO))?),
+                };
+                let fs = eccfs_err_to_occlum!(eccfs::ro::ROFS::new(
+                    mode,
+                    cache_size.unwrap_or(0) as usize,
+                    Some(0),
+                    0,
+                    Arc::new(store),
+                ));
+                lower.push(Arc::new(fs) as Arc<dyn eccfs::FileSystem>);
+            }
+
+            let fs = eccfs_err_to_occlum!(eccfs::overlay::OverlayFS::new(upper, lower,));
             Arc::new(fs) as Arc<dyn eccfs::FileSystem>
         } else {
-            let store = EccFSStorage {
-                f: Mutex::new(fs::File::open(path).map_err(|_| errno!(EIO))?),
-            };
-            let fs = eccfs_err_to_occlum!(eccfs::ro::ROFS::new(
-                mode,
-                cache_size.unwrap_or(0) as usize,
-                Some(0),
-                0,
-                Arc::new(store),
-            ));
-            Arc::new(fs) as Arc<dyn eccfs::FileSystem>
+            assert_eq!(path.len(), 1);
+            let (pb, mode) = path.pop().unwrap();
+            if writable {
+                let device = EccFSDevice { dir: pb };
+                let fs = eccfs_err_to_occlum!(eccfs::rw::RWFS::new(
+                    false,
+                    mode,
+                    None,
+                    0,
+                    Arc::new(device),
+                    &EccFSTimeProvider,
+                ));
+                Arc::new(fs) as Arc<dyn eccfs::FileSystem>
+            } else {
+                let store = EccFSStorage {
+                    f: Mutex::new(fs::File::open(pb).map_err(|_| errno!(EIO))?),
+                };
+                let fs = eccfs_err_to_occlum!(eccfs::ro::ROFS::new(
+                    mode,
+                    cache_size.unwrap_or(0) as usize,
+                    Some(0),
+                    0,
+                    Arc::new(store),
+                ));
+                Arc::new(fs) as Arc<dyn eccfs::FileSystem>
+            }
         };
 
         let mut ret = Self {
             fs,
-            writable,
             self_ptr: Weak::default(),
         };
 
@@ -236,19 +270,23 @@ impl EccFS {
 
 impl FileSystem for EccFS {
     fn sync(&self) -> vfs::Result<()> {
+        debug!("eccfs: sync");
         eccfs_try!(self.fs.fsync());
         Ok(())
     }
 
     fn root_inode(&self) -> Arc<dyn vfs::INode> {
+        debug!("eccfs: root_inode");
         self.new_inode(eccfs::ROOT_INODE_ID)
     }
 
     fn root_mac(&self) -> vfs::FsMac {
+        debug!("eccfs: root_mac");
         Default::default()
     }
 
     fn info(&self) -> vfs::FsInfo {
+        debug!("eccfs: info");
         let i = self.fs.finfo().unwrap();
         vfs::FsInfo {
             magic: i.magic as usize,
@@ -464,6 +502,7 @@ impl INode for EccInode {
     }
 
     fn fs(&self) -> Arc<dyn vfs::FileSystem> {
+        debug!("eccfs: fs");
         self.rcore_fs.clone()
     }
 

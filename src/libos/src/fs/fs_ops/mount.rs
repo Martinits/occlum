@@ -124,6 +124,27 @@ pub fn do_mount(
             };
             (vec![mc], None)
         }
+        MountOptions::ECCOVL(eccovl_options) => {
+            let mc = {
+                let ovl_mode = eccovl_options
+                    .path
+                    .into_iter()
+                    .zip(eccovl_options.mode.into_iter())
+                    .map(|(pb, mode)| (pb, mode.is_encrypted(), mode.into_key_entry()))
+                    .collect();
+                ConfigMount {
+                    type_: ConfigMountFsType::TYPE_ECCFS_OVL,
+                    target,
+                    source: None,
+                    options: ConfigMountOptions {
+                        ecc_ovl_mode: Some(ovl_mode),
+                        cache_size: eccovl_options.cache_size,
+                        ..Default::default()
+                    },
+                }
+            };
+            (vec![mc], None)
+        }
         MountOptions::SEFS(sefs_options) => {
             let mc = ConfigMount {
                 type_: ConfigMountFsType::TYPE_SEFS,
@@ -229,6 +250,7 @@ bitflags! {
 #[derive(Debug)]
 pub enum MountOptions {
     ECCFS(ECCFSMountOptions),
+    ECCOVL(ECCOVLMountOptions),
     UnionFS(UnionFSMountOptions),
     SEFS(SEFSMountOptions),
     HostFS(PathBuf),
@@ -246,6 +268,15 @@ impl MountOptions {
                     ECCFSMountOptions::from_input(options.as_str())?
                 };
                 Self::ECCFS(eccfs_mount_options)
+            }
+            ConfigMountFsType::TYPE_ECCFS_OVL => {
+                let ecc_ovl_mount_options = {
+                    let options = from_user::clone_cstring_safely(options)?
+                        .to_string_lossy()
+                        .into_owned();
+                    ECCOVLMountOptions::from_input(options.as_str())?
+                };
+                Self::ECCOVL(ecc_ovl_mount_options)
             }
             ConfigMountFsType::TYPE_SEFS => {
                 let sefs_mount_options = {
@@ -394,6 +425,62 @@ impl ECCFSMountOptions {
             writable,
             encrypted,
             ke,
+            cache_size,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ECCOVLMountOptions {
+    path: Vec<PathBuf>,
+    mode: Vec<ecc::FSMode>,
+    cache_size: Option<u64>,
+}
+
+impl ECCOVLMountOptions {
+    pub fn from_input(input: &str) -> Result<Self> {
+        let options: Vec<&str> = input.split(",").collect();
+
+        let path = options
+            .iter()
+            .find_map(|s| s.strip_prefix("image="))
+            .ok_or_else(|| errno!(EINVAL, "no upper options"))?
+            .split(":")
+            .map(|s| s.into())
+            .collect();
+
+        let mode_str: Vec<&str> = options
+            .iter()
+            .find_map(|s| s.strip_prefix("mode="))
+            .ok_or_else(|| errno!(EINVAL, "no mode options"))?
+            .split(":")
+            .collect();
+
+        let mut mode = Vec::new();
+        for ms in mode_str {
+            if ms.len() != (4 + ecc::KEY_ENTRY_SZ * 2) {
+                return_errno!(EINVAL, "mode str length is not correct");
+            }
+            let encrypted = match &ms[0..3] {
+                "int" => false,
+                "enc" => true,
+                _ => return_errno!(EINVAL, "invalid mode str format"),
+            };
+            let ke = ecc::parse_ke(&ms[4..])?;
+            mode.push(ecc::FSMode::from_key_entry(ke, encrypted))
+        }
+
+        let cache_size = match options.iter().find_map(|s| s.strip_prefix("cache=")) {
+            Some(sz_str) => Some(
+                u64::from_str_radix(sz_str, 10)
+                    .map_err(|_| errno!(EINVAL, "invalid cache size"))?,
+            ),
+            None => None,
+        };
+
+        Ok(Self {
+            path,
+            mode,
             cache_size,
         })
     }
