@@ -512,6 +512,9 @@ struct InputConfigApp {
 pub struct user_rootfs_config {
     // length of the struct
     len: usize,
+    // whether to use eccfs as rootfs
+    #[cfg(feature = "eccfs_root")]
+    eccfs_keystr: *const i8,
     // UnionFS type rootfs upper layer, read-write layer
     upper_layer_path: *const i8,
     // UnionFS type rootfs lower layer, read-only layer
@@ -576,7 +579,22 @@ fn combine_trusted_envs(envp: *const *const i8) -> Result<()> {
 }
 
 impl ConfigApp {
+    #[cfg(not(feature = "eccfs_root"))]
     pub fn from_user(config: &user_rootfs_config) -> Result<ConfigApp> {
+        Self::from_user_sefs(config)
+    }
+
+    #[cfg(feature = "eccfs_root")]
+    pub fn from_user(config: &user_rootfs_config) -> Result<(ConfigApp, bool)> {
+        let config_app = if !config.eccfs_keystr.is_null() {
+            Self::from_user_eccfs(config, config.eccfs_keystr)?
+        } else {
+            Self::from_user_sefs(config)?
+        };
+        Ok((config_app, !config.eccfs_keystr.is_null()))
+    }
+
+    fn from_user_sefs(config: &user_rootfs_config) -> Result<ConfigApp> {
         // Check config struct length for future possible extension
         if config.len != size_of::<user_rootfs_config>() {
             return_errno!(EINVAL, "User Config Struct length not match");
@@ -643,6 +661,104 @@ impl ConfigApp {
 
             root_container_sefs_mount_config.source = upper_layer;
         }
+
+        if entry_point.is_some() {
+            config_app.entry_points.clear();
+            config_app.entry_points.push(entry_point.unwrap())
+        }
+
+        if hostfs_source.is_some() {
+            let hostfs_mount_config = config_app
+                .mount
+                .iter_mut()
+                .find(|m| m.type_ == ConfigMountFsType::TYPE_HOSTFS)
+                .ok_or_else(|| errno!(Errno::ENOENT, "the HostFS is not valid"))?;
+            hostfs_mount_config.source = hostfs_source;
+            hostfs_mount_config.target = hostfs_target;
+        }
+
+        Ok(config_app)
+    }
+
+    #[cfg(feature = "eccfs_root")]
+    fn from_user_eccfs(config: &user_rootfs_config, key_ptr: *const i8) -> Result<ConfigApp> {
+        // Check config struct length for future possible extension
+        if config.len != size_of::<user_rootfs_config>() {
+            return_errno!(EINVAL, "User Config Struct length not match");
+        }
+
+        // Combine the default envs and user envs if necessary
+        if !config.envp.is_null() {
+            combine_trusted_envs(config.envp)?;
+        }
+
+        let upper_layer = to_option_pathbuf(config.upper_layer_path)?;
+        if upper_layer.is_none() {
+            return_errno!(EINVAL, "ECC OVL requires upper layer");
+        }
+        let entry_point = to_option_pathbuf(config.entry_point)?;
+        let hostfs_source = to_option_pathbuf(config.hostfs_source)?;
+
+        let hostfs_target = if config.hostfs_target.is_null() {
+            PathBuf::from("/host")
+        } else {
+            PathBuf::from(
+                from_user::clone_cstring_safely(config.hostfs_target)?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        };
+
+        let mut pb = vec![upper_layer.unwrap()];
+        if !config.lower_layer_path.is_null() {
+            let lower_layer = from_user::clone_cstring_safely(config.lower_layer_path)?
+                .to_string_lossy()
+                .into_owned();
+            for p in lower_layer.as_str().split(":") {
+                pb.push(PathBuf::from(p));
+            }
+        }
+
+        let mode_str = from_user::clone_cstring_safely(key_ptr)?
+            .to_string_lossy()
+            .into_owned();
+        let mut mode = Vec::new();
+        for ms in mode_str.split(":") {
+            if ms.len() != (4 + fs::ecc::KEY_ENTRY_SZ * 2) {
+                return_errno!(EINVAL, "mode str length is not correct");
+            }
+            let encrypted = match &ms[0..3] {
+                "int" => false,
+                "enc" => true,
+                _ => return_errno!(EINVAL, "invalid mode str format"),
+            };
+            let ke = fs::ecc::parse_ke(&ms[4..])?;
+            mode.push((encrypted, ke));
+        }
+
+        if mode.len() != pb.len() {
+            return_errno!(EINVAL, "mode num is not the same as path num");
+        }
+
+        let ovl_mode = pb
+            .into_iter()
+            .zip(mode.into_iter())
+            .map(|(pb, (enc, ke))| (pb, enc, ke))
+            .collect();
+
+        let mut config_app = LIBOS_CONFIG.get_app_config("app").unwrap().clone();
+        let root_mount_config = config_app
+            .mount
+            .iter_mut()
+            .find(|m| m.target == Path::new("/") && m.type_ == ConfigMountFsType::TYPE_UNIONFS)
+            .ok_or_else(|| errno!(Errno::ENOENT, "the root UnionFS is not valid"))?;
+
+        root_mount_config.type_ = ConfigMountFsType::TYPE_ECCFS_OVL;
+        root_mount_config.source = None;
+        root_mount_config.options = ConfigMountOptions {
+            ecc_ovl_mode: Some(ovl_mode),
+            ..Default::default()
+        };
 
         if entry_point.is_some() {
             config_app.entry_points.clear();

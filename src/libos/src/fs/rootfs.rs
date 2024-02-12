@@ -75,6 +75,24 @@ pub fn open_root_fs_according_to(
     Ok(root_mountable_unionfs)
 }
 
+#[cfg(feature = "eccfs_root")]
+pub fn open_eccfs_rootfs(
+    mount_configs: &Vec<ConfigMount>,
+    user_key: &Option<sgx_key_128bit_t>,
+) -> Result<Arc<dyn FileSystem>> {
+    let root_mount_config = mount_configs
+        .iter()
+        .find(|m| m.target == Path::new("/") && m.type_ == ConfigMountFsType::TYPE_ECCFS_OVL)
+        .ok_or_else(|| errno!(Errno::ENOENT, "Cannot find config for ECC OVL"))?;
+    if root_mount_config.options.ecc_ovl_mode.is_none() {
+        return_errno!(EINVAL, "the root ECC OVL requires ecc_ovl_mode configs");
+    }
+    let root_ecc_ovl_fs = open_or_create_eccfs_according_to(root_mount_config)?;
+
+    let root_mountable_ecc_ovl_fs = MountFS::new(root_ecc_ovl_fs);
+    Ok(root_mountable_ecc_ovl_fs)
+}
+
 pub fn umount_nonroot_fs(
     root: &Arc<dyn INode>,
     abs_path: &str,

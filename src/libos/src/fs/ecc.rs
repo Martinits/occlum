@@ -469,7 +469,7 @@ impl INode for EccInode {
     }
 
     fn find(&self, name: &str) -> vfs::Result<Arc<dyn vfs::INode>> {
-        debug!("eccfs: find");
+        debug!("eccfs: find {}", name);
         if let Some(iid) = eccfs_try!(self.fs.lookup(self.iid, name)) {
             Ok(self.rcore_fs.new_inode(iid))
         } else {

@@ -137,7 +137,15 @@ ifneq ($(OCCLUM_COV),)
 endif
 
 ifeq ($(SGX_MODE), HYPER)
-    LIBOS_FEATURES += hyper_mode
+    LIBOS_FEATURES += hyper_mod
+endif
+
+ifeq ($(SGX_MODE), HW)
+	ifeq ($(shell lscpu | grep aes | wc -l), 1)
+		ECCFS_RUSTFLAGS += "-Ctarget-feature=+aes,+pclmulqdq"
+	else
+		ECCFS_RUSTFLAGS += "--cfg aes_force_soft --cfg polyval_force_soft"
+	endif
 endif
 
 # Release build is for production use. We enable code coverage only for debug
@@ -145,7 +153,7 @@ endif
 # have different output paths.
 ifeq ($(OCCLUM_RELEASE_BUILD), 1)
 $(LIBOS_CORE_RS_A): $(RUST_SRCS)
-	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) cargo build --release --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR) --features "$(LIBOS_FEATURES)"
+	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) RUSTFLAGS=$(ECCFS_RUSTFLAGS) cargo build --release --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR) --features "$(LIBOS_FEATURES)"
 	@echo "CARGO (release) => $@"
 else ifneq ($(OCCLUM_COV),)
 $(LIBOS_CORE_RS_A): $(RUST_SRCS)
@@ -153,7 +161,7 @@ $(LIBOS_CORE_RS_A): $(RUST_SRCS)
 	@echo "CARGO (debug + cov) => $@"
 else
 $(LIBOS_CORE_RS_A): $(RUST_SRCS)
-	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) cargo build --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR) --features "$(LIBOS_FEATURES)"
+	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) RUSTFLAGS=$(ECCFS_RUSTFLAGS) cargo build --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR) --features "$(LIBOS_FEATURES)"
 	@echo "CARGO (debug) => $@"
 endif
 

@@ -669,15 +669,36 @@ pub fn do_mount_rootfs(
     };
     // If user provided valid parameters, do runtime mount and boot
     // Otherwise, do general mount and boot
+    #[cfg(not(feature = "eccfs_root"))]
     if !rootfs_config_ptr.is_null() {
         from_user::check_ptr(rootfs_config_ptr)?;
         let rootfs_config = unsafe { *rootfs_config_ptr };
+
         let app_config = ConfigApp::from_user(&rootfs_config)?;
+
         debug!("user provided app config: {:?}", app_config);
         fs_ops::do_mount_rootfs(&app_config, &key)?;
     } else {
         fs_ops::do_mount_rootfs(&config::LIBOS_CONFIG.get_app_config("app").unwrap(), &key)?;
     }
+
+    #[cfg(feature = "eccfs_root")]
+    if !rootfs_config_ptr.is_null() {
+        from_user::check_ptr(rootfs_config_ptr)?;
+        let rootfs_config = unsafe { *rootfs_config_ptr };
+
+        let (app_config, use_eccfs) = ConfigApp::from_user(&rootfs_config)?;
+
+        debug!("user provided app config: {:?}", app_config);
+        fs_ops::do_mount_rootfs(&app_config, &key, use_eccfs)?;
+    } else {
+        fs_ops::do_mount_rootfs(
+            &config::LIBOS_CONFIG.get_app_config("app").unwrap(),
+            &key,
+            false,
+        )?;
+    }
+
     Ok((0))
 }
 

@@ -6,6 +6,10 @@ use util::host_file_util::{write_host_file, HostFile};
 use util::mem_util::from_user;
 
 use super::rootfs::{mount_nonroot_fs_according_to, open_root_fs_according_to, umount_nonroot_fs};
+
+#[cfg(feature = "eccfs_root")]
+use super::rootfs::open_eccfs_rootfs;
+
 use super::*;
 
 lazy_static! {
@@ -15,6 +19,7 @@ lazy_static! {
 pub fn do_mount_rootfs(
     user_app_config: &config::ConfigApp,
     user_key: &Option<sgx_key_128bit_t>,
+    #[cfg(feature = "eccfs_root")] use_eccfs: bool,
 ) -> Result<()> {
     debug!("mount rootfs");
 
@@ -23,7 +28,17 @@ pub fn do_mount_rootfs(
     }
 
     let mount_config = &user_app_config.mount;
+
+    #[cfg(feature = "eccfs_root")]
+    let new_rootfs = if use_eccfs {
+        open_eccfs_rootfs(mount_config, user_key)?
+    } else {
+        open_root_fs_according_to(mount_config, user_key)?
+    };
+
+    #[cfg(not(feature = "eccfs_root"))]
     let new_rootfs = open_root_fs_according_to(mount_config, user_key)?;
+
     mount_nonroot_fs_according_to(&new_rootfs.root_inode(), mount_config, user_key, true)?;
     MOUNT_ONCE.call_once(|| {
         let mut rootfs = ROOT_FS.write().unwrap();
