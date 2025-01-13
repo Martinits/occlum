@@ -23,6 +23,7 @@
 #include "pal_error.h"
 #include "pal_log.h"
 #include "base64.h"
+#include "enclave_cache.h"
 
 #define MAX_PATH            FILENAME_MAX
 #define TOKEN_FILENAME      "enclave.token"
@@ -71,7 +72,7 @@ static const char *get_enclave_absolute_path(const char *instance_dir) {
  *   Step 2: call sgx_create_enclave to initialize an enclave instance
  *   Step 3: save the launch token if it is updated
  */
-int pal_init_enclave(const char *instance_dir) {
+int pal_init_enclave_actual(const char *instance_dir) {
     char token_path[MAX_PATH] = {'\0'};
     sgx_launch_token_t token = {0};
     sgx_status_t ret = SGX_ERROR_UNEXPECTED;
@@ -172,11 +173,23 @@ int pal_init_enclave(const char *instance_dir) {
     return 0;
 }
 
-int pal_destroy_enclave(void) {
-    sgx_destroy_enclave(global_eid);
-    global_eid = SGX_INVALID_ENCLAVE_ID;
-    return 0;
+int pal_init_enclave(const char *instance_dir) {
+    int ret = try_get_enclave_cache();
+    if (ret >= 0) {
+        return ret;
+    }
+    return pal_init_enclave_actual(instance_dir);
 }
+
+int pal_destroy_enclave(void) {
+    global_eid = SGX_INVALID_ENCLAVE_ID;
+    return save_enclave_cache();
+}
+// int pal_destroy_enclave(void) {
+//     sgx_destroy_enclave(global_eid);
+//     global_eid = SGX_INVALID_ENCLAVE_ID;
+//     return 0;
+// }
 
 sgx_enclave_id_t pal_get_enclave_id(void) {
     return global_eid;

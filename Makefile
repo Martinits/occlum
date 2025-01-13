@@ -1,6 +1,9 @@
-.PHONY: all submodule githooks src test tools install format format-check gen_cov_report clean
+.PHONY: all submodule githooks src test tools install format format-check gen_cov_report clean epm
 
-all: src
+all: src epm
+
+epm:
+	cd epm && cargo build --release
 
 githooks:
 	@find .git/hooks -type l -exec rm {} \; && find .githooks -type f -exec ln -sf ../../{} .git/hooks/ \;
